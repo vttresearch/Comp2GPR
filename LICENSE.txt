@@ -1,7 +1,7 @@
 			Comp2GPR  Non-Commercial License Agreement
 
 The Comp2GPR software ("Software") has been developed and made available by VTT for noncommercial,
-non-profit use. For more information about the Comp2GPR Commons, please see NETPAGE. If you wish
+non-profit use. If you wish
 to use the Software for any commercial purposes, including fee-based service projects, you will
 need to execute a separate licensing agreement with the VTT and pay a fee. In that case, 
 please contact: ip.agreements@vtt.fi
@@ -22,7 +22,7 @@ conducting research excluding
 	
 	
 	
-“Software” includes both source and executable copies of the ActSeek software as distributed by VTT
+“Software” includes both source and executable copies of the Comp2GPR software as distributed by VTT
 VTT grant Non-Commercial Users the rights to perform, display, reproduce and modify the Software solely
 for internal Non-Commercial purposes, on the following conditions:
 
@@ -43,7 +43,7 @@ for internal Non-Commercial purposes, on the following conditions:
      modifications or improvements to Software from the VTT.
      
     4. You agree to acknowledge the contribution of the the Software make to your research, and cite 
-     appropriate references about the Software in your publications (see CITING_ACTSEEK.md).
+     appropriate references about the Software in your publications (see CITING_COMP2GPR.md).
      
     5. Any risk associated with using the Software is with you and/or your institution. Software is 
      experimental in nature and is made available as a research courtesy "AS IS," without obligation 
