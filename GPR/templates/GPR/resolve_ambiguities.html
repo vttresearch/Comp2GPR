@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resolve Ambiguities - GPR Analysis</title>
+    {% load static %}
+    {% load gpr_filters %}
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding-top: 20px;
+        }
+
+        .page-header {
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            color: white;
+            padding: 30px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+        }
+
+        .page-header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 0;
+        }
+
+        .instructions {
+            background: #e8f4f8;
+            border-left: 4px solid #3498db;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 25px;
+        }
+
+        .instructions h5 {
+            color: #2980b9;
+            margin-bottom: 10px;
+        }
+
+        /* Accordion-style reaction rows */
+        .reaction-row {
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            overflow: hidden;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+        }
+
+        .reaction-header {
+            display: flex;
+            align-items: center;
+            padding: 14px 20px;
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.2s;
+            gap: 14px;
+        }
+
+        .reaction-header:hover {
+            background: #f0f5ff;
+        }
+
+        .reaction-header .chevron {
+            font-size: 1.1rem;
+            transition: transform 0.25s;
+            color: #7f8c8d;
+            flex-shrink: 0;
+        }
+
+        .reaction-row.open .reaction-header .chevron {
+            transform: rotate(90deg);
+        }
+
+        .reaction-header .rxn-id {
+            font-weight: 600;
+            color: #2980b9;
+            font-family: monospace;
+            white-space: nowrap;
+        }
+
+        .reaction-header .rxn-name {
+            color: #555;
+            font-size: 0.92rem;
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .reaction-header .gene-count {
+            font-size: 0.82rem;
+            color: #7f8c8d;
+            white-space: nowrap;
+        }
+
+        .reaction-body {
+            display: none;
+            border-top: 1px solid #e9ecef;
+            padding: 20px;
+            background: #fafbfd;
+        }
+
+        .reaction-row.open .reaction-body {
+            display: block;
+        }
+
+        .formula-line {
+            font-family: monospace;
+            background: #e8f6e8;
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin-bottom: 8px;
+            font-size: 0.9rem;
+            border-left: 3px solid #27ae60;
+        }
+
+        .gpr-rule {
+            font-family: monospace;
+            background: #ecf0f1;
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin-bottom: 16px;
+            font-size: 0.9rem;
+        }
+
+        .gene-block {
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 14px;
+            background: white;
+        }
+
+        .blast-info {
+            background: #e8f4f8;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-size: 0.9rem;
+        }
+
+        /* Checkbox complex cards */
+        .complex-option {
+            background: #f8f9fa;
+            padding: 14px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            border: 2px solid #dee2e6;
+            transition: all 0.2s;
+        }
+
+        .complex-option:hover {
+            background: #e8eef5;
+            border-color: #3498db;
+        }
+
+        .complex-option.selected {
+            border-color: #3498db;
+            background: #eaf2fa;
+        }
+
+        .complex-option.none-option {
+            border-color: #e0e0e0;
+        }
+
+        .complex-name {
+            font-weight: 600;
+            font-size: 1.05rem;
+            color: #2c3e50;
+        }
+
+        .complex-aliases {
+            color: #7f8c8d;
+            font-size: 0.9rem;
+            font-style: italic;
+        }
+
+        .btn-submit {
+            background: linear-gradient(90deg, #3498db, #2980b9);
+            border: none;
+            padding: 12px 30px;
+            font-weight: 600;
+            border-radius: 6px;
+        }
+
+        .btn-submit:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.3);
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="page-header">
+        <h1><a href="/" style="text-decoration: none;">🔧</a> Resolve Complex Ambiguities</h1>
+        <p class="mb-0">{{ job.organism_name }} - Multiple complexes detected for some genes</p>
+    </div>
+
+    <div class="instructions">
+        <h5>📋 Instructions</h5>
+        <p class="mb-0">Click a reaction to expand it. For each gene you may select <strong>one or more</strong> complexes (they will be OR-ed in the GPR rule). "None" is pre-selected — leave it if you don't want to assign a complex.</p>
+    </div>
+
+    <form method="post">
+        {% csrf_token %}
+
+        {% for reaction in reactions_list %}
+        <div class="reaction-row" id="rxn-row-{{ forloop.counter0 }}">
+            <!-- Clickable reaction header -->
+            <div class="reaction-header" onclick="toggleReaction({{ forloop.counter0 }})">
+                <span class="chevron">▶</span>
+                <span class="rxn-id">{{ reaction.reaction_id }}</span>
+                <span class="rxn-name">{{ reaction.reaction_name }}</span>
+                <span class="gene-count">{{ reaction.genes|length }} gene{{ reaction.genes|length|pluralize }}</span>
+            </div>
+
+            <!-- Expandable body -->
+            <div class="reaction-body">
+                {% if reaction.formula %}
+                <div class="formula-line">{{ reaction.formula }}</div>
+                {% endif %}
+                <div class="gpr-rule">Current GPR: {{ reaction.gpr }}</div>
+
+                {% for gene_case in reaction.genes %}
+                <div class="gene-block">
+                    <h6 style="color:#2c3e50;margin-bottom:12px;">
+                        <code>{{ gene_case.genome_gene }}</code>
+                        <span class="text-muted" style="font-size:0.88rem;">(UniProt: {{ gene_case.uniprot_id }})</span>
+                    </h6>
+
+                    <!-- Compact BLAST hit -->
+                    <div class="mb-3" style="font-size:0.88rem;">
+                        BLAST: e-value <code>{{ gene_case.blast_hit.evalue|sci }}</code>,
+                        identity <strong>{{ gene_case.blast_hit.identity|floatformat:1 }}%</strong>,
+                        coverage {{ gene_case.blast_hit.query_coverage|floatformat:1 }}%,
+                        bitscore {{ gene_case.blast_hit.bitscore|floatformat:1 }}
+                    </div>
+
+                    <!-- Hidden field that carries "none" when no checkbox is ticked -->
+                    <input type="hidden"
+                           name="case_{{ gene_case.case_idx }}_reaction_{{ gene_case.reaction_idx }}"
+                           value="">
+
+                    <strong style="font-size:0.92rem;">Select complex(es) for this gene in this reaction:</strong>
+                    <div class="row mt-2">
+                        {% for complex_info in gene_case.complexes %}
+                        <div class="col-md-6 mb-2">
+                            <div class="complex-option" id="cpx_{{ gene_case.case_idx }}_{{ gene_case.reaction_idx }}_{{ forloop.counter0 }}">
+                                <div class="d-flex align-items-start">
+                                    <input type="checkbox"
+                                           id="cb_{{ gene_case.case_idx }}_{{ gene_case.reaction_idx }}_{{ forloop.counter0 }}"
+                                           name="case_{{ gene_case.case_idx }}_reaction_{{ gene_case.reaction_idx }}"
+                                           value="{{ complex_info.complex_id }}"
+                                           class="form-check-input mt-1"
+                                           onchange="highlightCard(this)">
+                                    <label for="cb_{{ gene_case.case_idx }}_{{ gene_case.reaction_idx }}_{{ forloop.counter0 }}" class="ms-2 flex-grow-1">
+                                        <div class="complex-name">{{ complex_info.complex_id }}</div>
+                                        {% if complex_info.display_name and complex_info.display_name != complex_info.complex_id %}
+                                        <div class="complex-aliases">{{ complex_info.display_name }}</div>
+                                        {% endif %}
+                                        {% if complex_info.aliases %}
+                                        <div class="complex-aliases">Aliases: {{ complex_info.aliases|join:", " }}</div>
+                                        {% endif %}
+                                        {% if complex_info.description %}
+                                        <div style="background:#e8f6e8;padding:8px 10px;border-radius:4px;margin-top:6px;font-size:0.9rem;border-left:3px solid #27ae60;">
+                                            📝 {{ complex_info.description }}
+                                        </div>
+                                        {% endif %}
+
+                                        {% if complex_info.stoichiometry %}
+                                        <div class="mt-2" style="background:#e3f2fd;padding:10px;border-radius:4px;border-left:3px solid #1976d2;">
+                                            <strong style="color:#1565c0;font-size:0.9rem;">📋 Protein Members & Genome Matches:</strong>
+                                            <div style="margin-top:6px;">
+                                                {% for uniprot, stoich in complex_info.stoichiometry.items %}
+                                                    {% for blast_result in complex_info.blast_results %}
+                                                        {% if blast_result.uniprot_id == uniprot %}
+                                                        <div style="background:#bbdefb;padding:6px 8px;border-radius:3px;margin:4px 0;font-size:0.85rem;border-left:3px solid #1565c0;">
+                                                            <code>{{ uniprot }}</code>{% if stoich > 1 %} <span style="color:#d32f2f;">×{{ stoich }}</span>{% endif %}
+                                                            → <strong>{{ blast_result.genome_gene }}</strong>
+                                                            {% if blast_result.evalue %}<span style="color:#666;"> ({{ blast_result.evalue|stringformat:".2e" }})</span>{% endif %}
+                                                        </div>
+                                                        {% endif %}
+                                                    {% endfor %}
+                                                {% endfor %}
+                                            </div>
+                                        </div>
+                                        {% endif %}
+
+                                        {% if complex_info.blast_results %}
+                                        <div style="background:#f0f8e8;border-left:4px solid #27ae60;padding:10px 12px;border-radius:4px;margin-top:8px;">
+                                            <strong style="font-size:0.9rem;">🧬 GPR Preview:</strong>
+                                            <code style="display:block;margin-top:4px;background:white;padding:6px 8px;border-radius:3px;font-size:0.9rem;">
+                                                {% spaceless %}
+                                                {% for result in complex_info.blast_results %}
+                                                    {% if result.genome_gene %}{{ result.genome_gene }}{% endif %}
+                                                    {% if not forloop.last %} and {% endif %}
+                                                {% endfor %}
+                                                {% endspaceless %}
+                                            </code>
+                                        </div>
+
+                                        <!-- Detailed BLAST table (collapsed) -->
+                                        <div class="mt-2">
+                                            <a href="#" onclick="event.preventDefault(); event.stopPropagation(); var t=this.nextElementSibling; t.style.display=t.style.display==='none'?'block':'none';" style="font-size:0.85rem;color:#2980b9;">
+                                                Show detailed BLAST mapping ▼
+                                            </a>
+                                            <div style="display:none;" class="blast-info mt-1">
+                                                <table class="table table-sm table-bordered" style="font-size:0.82rem;background:white;">
+                                                    <thead>
+                                                        <tr style="background:#f0f0f0;">
+                                                            <th>Complex Protein</th>
+                                                            <th>Genome Gene</th>
+                                                            <th>E-value</th>
+                                                            <th>Bit Score</th>
+                                                            <th>Identity %</th>
+                                                            <th>Coverage %</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {% for result in complex_info.blast_results %}
+                                                        <tr>
+                                                            <td><code>{{ result.uniprot_id }}</code></td>
+                                                            <td><strong>{{ result.genome_gene }}</strong></td>
+                                                            <td>{% if result.evalue and result.evalue != 'N/A' %}<code>{{ result.evalue|stringformat:".2e" }}</code>{% else %}{{ result.evalue }}{% endif %}</td>
+                                                            <td>{% if result.bitscore and result.bitscore != 'N/A' %}{{ result.bitscore|floatformat:1 }}{% else %}{{ result.bitscore }}{% endif %}</td>
+                                                            <td>{% if result.identity and result.identity != 'N/A' %}{{ result.identity|floatformat:1 }}%{% else %}{{ result.identity }}{% endif %}</td>
+                                                            <td>{% if result.query_coverage and result.query_coverage != 'N/A' %}{{ result.query_coverage|floatformat:1 }}%{% else %}{{ result.query_coverage }}{% endif %}</td>
+                                                        </tr>
+                                                        {% endfor %}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                        {% endif %}
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+
+        <div class="mb-4 mt-3">
+            <button type="submit" class="btn btn-primary btn-lg btn-submit">
+                ✅ Save Selections & Complete Analysis
+            </button>
+        </div>
+    </form>
+
+</div>
+
+<script>
+function toggleReaction(idx) {
+    document.getElementById('rxn-row-' + idx).classList.toggle('open');
+}
+
+function highlightCard(cb) {
+    var card = cb.closest('.complex-option');
+    if (cb.checked) {
+        card.classList.add('selected');
+    } else {
+        card.classList.remove('selected');
+    }
+}
+</script>
+
+</body>
+</html>

@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Complex Assignments - GPR Analysis</title>
+    {% load static %}
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding-top: 20px;
+        }
+        
+        .page-header {
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            color: white;
+            padding: 30px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+        }
+        
+        .page-header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 0;
+        }
+        
+        .back-link {
+            color: white;
+            text-decoration: none;
+            display: inline-block;
+            margin-bottom: 15px;
+        }
+        
+        .back-link:hover {
+            text-decoration: underline;
+        }
+        
+        .info-card {
+            background: white;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 25px;
+        }
+        
+        .info-card h2 {
+            font-size: 1.3rem;
+            margin-bottom: 20px;
+            color: #333;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        
+        .table {
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .table thead {
+            background: #3498db;
+            color: white;
+        }
+        
+        .table tbody tr:hover {
+            background-color: #f5f5f5;
+        }
+        
+        .gene-code {
+            font-family: monospace;
+            background: #ecf0f1;
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-weight: 600;
+        }
+        
+        .complex-badge {
+            display: inline-block;
+            background: linear-gradient(90deg, #3498db, #2980b9);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+        
+        .complex-name {
+            color: #7f8c8d;
+            font-size: 0.9rem;
+            font-style: italic;
+            display: block;
+            margin-top: 4px;
+        }
+        
+        .reaction-code {
+            font-family: monospace;
+            background: #e8f4f8;
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-size: 0.9rem;
+        }
+        
+        .badge-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+        
+        .no-data {
+            text-align: center;
+            padding: 40px 20px;
+            background: #f8f9fa;
+            border-radius: 6px;
+        }
+        
+        .no-data p {
+            color: #7f8c8d;
+            margin: 0;
+        }
+        
+        .summary-stat {
+            text-align: center;
+            padding: 15px;
+            background: #ecf0f1;
+            border-radius: 6px;
+        }
+        
+        .summary-stat .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #3498db;
+        }
+        
+        .summary-stat .stat-label {
+            color: #7f8c8d;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <a href="{% url 'gpr:job_detail' job.id %}" class="back-link">← Back to Job Details</a>
+    
+    <div class="page-header">
+        <h1><a href="/" style="text-decoration: none;">📊</a> Complex Assignments</h1>
+        <p class="mb-0">{{ job.organism_name }} - Selected complexes for each gene-reaction pair</p>
+    </div>
+
+    {% if resolutions %}
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="summary-stat">
+                <div class="stat-value">{{ resolutions|length }}</div>
+                <div class="stat-label">Total Assignments</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="summary-stat">
+                <div class="stat-value">{{ genes|length }}</div>
+                <div class="stat-label">Unique Genes</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="summary-stat">
+                <div class="stat-value">{{ reactions|length }}</div>
+                <div class="stat-label">Reactions</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="summary-stat">
+                <div class="stat-value">{{ complexes|length }}</div>
+                <div class="stat-label">Complexes</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="info-card">
+        <h2>📋 Gene-Reaction-Complex Assignments</h2>
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Gene</th>
+                        <th>Reaction</th>
+                        <th>Selected Complex</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for resolution in resolutions %}
+                    <tr>
+                        <td><span class="gene-code">{{ resolution.genome_gene }}</span></td>
+                        <td><span class="reaction-code">{{ resolution.reaction_id }}</span></td>
+                        <td>
+                            <div class="complex-badge">{{ resolution.selected_complex }}</div>
+                            {% if complex_metadata|get_item:resolution.selected_complex %}
+                                {% with cpx=complex_metadata|get_item:resolution.selected_complex %}
+                                <div class="complex-name">{{ cpx.name }}</div>
+                                {% if cpx.aliases %}
+                                <small class="text-muted">{{ cpx.aliases|join:", " }}</small>
+                                {% endif %}
+                                {% endwith %}
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="info-card">
+        <h2>🏢 Complex Summary</h2>
+        <div class="row">
+            {% for complex_id, metadata in complex_metadata.items %}
+            <div class="col-md-6 mb-3">
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; border-left: 4px solid #3498db;">
+                    <div style="font-weight: 600; color: #2c3e50; margin-bottom: 5px;">{{ complex_id }}</div>
+                    <div style="color: #555;">{{ metadata.name }}</div>
+                    {% if metadata.aliases %}
+                    <div style="color: #7f8c8d; font-size: 0.9rem; font-style: italic;">
+                        Aliases: {{ metadata.aliases|join:", " }}
+                    </div>
+                    {% endif %}
+                    {% with count=resolutions|length %}
+                    <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e0e0e0;">
+                        <span class="badge bg-info">{{ count }} assignment{{ count|pluralize }}</span>
+                    </div>
+                    {% endwith %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    {% else %}
+    <div class="info-card">
+        <div class="no-data">
+            <p>No complex assignments yet.</p>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="mb-4">
+        <a href="{% url 'gpr:job_detail' job.id %}" class="btn btn-primary">Back to Job Details</a>
+        <a href="{% url 'gpr:results_download' job.id %}" class="btn btn-success">📥 Download Results</a>
+    </div>
+
+</div>
+
+<script>
+// Template filter for dictionary access
+Django = {
+    get_item: function(dict, key) {
+        return dict[key];
+    }
+};
+</script>
+
+</body>
+</html>

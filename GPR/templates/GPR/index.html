@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPR Analysis - CarveFungi</title>
+    {% load static %}
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding-top: 20px;
+        }
+        
+        .page-header {
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            color: white;
+            padding: 40px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+        }
+        
+        .page-header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin: 0 0 10px 0;
+        }
+        
+        .page-header p {
+            font-size: 1.1rem;
+            margin: 0;
+            opacity: 0.95;
+        }
+        
+        .info-card {
+            background: white;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 25px;
+        }
+        
+        .info-card h2 {
+            font-size: 1.3rem;
+            margin-bottom: 20px;
+            color: #333;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        
+        .form-label {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+        }
+        
+        .form-control, .form-select {
+            border-radius: 6px;
+            border: 1px solid #ddd;
+            padding: 10px 12px;
+            transition: border-color 0.3s;
+        }
+        
+        .form-control:focus, .form-select:focus {
+            border-color: #3498db;
+            box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+        }
+        
+        .btn-primary {
+            background: linear-gradient(90deg, #3498db, #2980b9);
+            border: none;
+            padding: 12px 30px;
+            font-weight: 600;
+            border-radius: 6px;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.3);
+        }
+        
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .job-item {
+            background: white;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            border-left: 4px solid #3498db;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+            transition: all 0.3s;
+        }
+        
+        .job-item:hover {
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            transform: translateX(2px);
+        }
+        
+        .job-item a {
+            color: #3498db;
+            text-decoration: none;
+            font-weight: 600;
+        }
+        
+        .job-item a:hover {
+            text-decoration: underline;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        
+        .status-badge.completed {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-badge.processing {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .status-badge.queued {
+            background: #cce5ff;
+            color: #004085;
+        }
+        
+        .status-badge.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .small-text {
+            font-size: 0.9rem;
+            color: #666;
+        }
+        
+        .alert {
+            border-radius: 6px;
+            border: none;
+        }
+
+        .spinner-border {
+            width: 1rem;
+            height: 1rem;
+            margin-right: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container mt-3">
+    <div class="page-header">
+        <h1><a href="/" style="text-decoration: none;">🔬</a> GPR Rules Analysis</h1>
+        <p>Analyze and improve Gene-Protein-Reaction (GPR) rules using BLAST-based genetic context analysis</p>
+    </div>
+
+    <div class="row">
+        <!-- Form Column -->
+        <div class="col-lg-6">
+            <div class="info-card">
+                <h2>📋 New GPR Analysis</h2>
+                <form method="post" enctype="multipart/form-data" id="gprForm">
+                    {% csrf_token %}
+                    
+                    <div class="mb-3">
+                        <label for="{{ form.organism_name.id_for_label }}" class="form-label">Organism Name *</label>
+                        {{ form.organism_name }}
+                        {% if form.organism_name.errors %}
+                            <div class="invalid-feedback d-block">{{ form.organism_name.errors }}</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="{{ form.metabolic_model.id_for_label }}" class="form-label">Metabolic Model (SBML/JSON) *</label>
+                        {{ form.metabolic_model }}
+                        <small class="form-text text-muted d-block mt-1">Upload your metabolic model in SBML (.xml) or JSON format</small>
+                        {% if form.metabolic_model.errors %}
+                            <div class="invalid-feedback d-block">{{ form.metabolic_model.errors }}</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="{{ form.genome_fasta.id_for_label }}" class="form-label">Genome FASTA File *</label>
+                        {{ form.genome_fasta }}
+                        <small class="form-text text-muted d-block mt-1">Upload the organism's genome in FASTA format (.fasta, .fa, .fna)</small>
+                        {% if form.genome_fasta.errors %}
+                            <div class="invalid-feedback d-block">{{ form.genome_fasta.errors }}</div>
+                        {% endif %}
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100 mt-3" id="submitBtn">
+                        <span id="submitText">Analyze GPR Rules</span>
+                        <span id="submitSpinner" class="spinner-border spinner-border-sm ms-2" style="display:none;"></span>
+                    </button>
+                </form>
+
+                <div class="alert alert-info mt-4" role="alert">
+                    <h6 class="alert-heading">💡 How it works:</h6>
+                    <ul class="mb-0 small">
+                        <li>Extracts genes from your metabolic model</li>
+                        <li>Searches genes against known complexes using Diamond</li>                        
+                        <li>Finds other possible orthologs in your genome for the same complex protein</li>
+                        <li>Shows potential matches for each gene</li>
+                        <li>Generates GPR rule recommendations</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Jobs Column -->
+        <div class="col-lg-6">
+            <div class="info-card">
+                <h2>📊 Recent Analyses</h2>
+                <div style="max-height: 500px; overflow-y: auto;">
+                    {% if jobs %}
+                        {% for job in jobs %}
+                        <div class="job-item">
+                            <div style="display: flex; justify-content: space-between; align-items: start;">
+                                <div style="flex: 1;">
+                                    <a href="{% url 'gpr:job_detail' job.id %}">{{ job.organism_name }}</a>
+                                    <div class="small-text mt-1">Job ID: <code>{{ job.job_id }}</code></div>
+                                </div>
+                                <span class="status-badge {% if job.status == 'completed' %}completed{% elif job.status == 'error' %}error{% elif job.status == 'processing' %}processing{% else %}queued{% endif %}">
+                                    {{ job.get_status_display }}
+                                </span>
+                            </div>
+                            <div class="small-text mt-2">
+                                Genes: {{ job.gene_count|default:"?" }} | Matched: {{ job.matched_genes }}
+                            </div>
+                            <div class="small-text">{{ job.created_at|date:"Y-m-d H:i" }}</div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div style="text-align: center; padding: 40px 20px; background: #f8f9fa; border-radius: 6px;">
+                            <p class="text-muted">No analyses yet. Submit one to get started!</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.getElementById('gprForm').addEventListener('submit', function() {
+        const btn = document.getElementById('submitBtn');
+        const text = document.getElementById('submitText');
+        const spinner = document.getElementById('submitSpinner');
+        
+        btn.disabled = true;
+        text.style.display = 'none';
+        spinner.style.display = 'inline-block';
+    });
+</script>
+</body>
+</html>
