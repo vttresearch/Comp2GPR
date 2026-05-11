@@ -86,19 +86,13 @@ The project structure:
     └── sbml/
 ```
 
-### 2. Create the media subdirectories
-
-```bash
-mkdir -p media/gpr_genomes media/gpr_models media/sbml media/reconstructed_models
-```
-
-### 3. Run migrations
+### 2. Run migrations
 
 ```bash
 python manage.py migrate
 ```
 
-### 4. Load complex metadata into the database
+### 3. Load complex metadata into the database
 
 The `ComplexMetadata` table should be populated for the ambiguity-resolution UI to show complex names and descriptions:
 
@@ -120,7 +114,7 @@ for complex_id, description in metadata.items():
     )
 ```
 
-### 5. Start the background queue worker
+### 4. Start the background queue worker
 
 Run the worker in a separate terminal (or as a systemd service):
 
@@ -134,7 +128,7 @@ The worker:
 - Writes a PID file to `media/queue_worker.pid`
 - Handles SIGTERM/SIGINT gracefully
 
-### 6. Start the development server
+### 5. Start the development server
 
 ```bash
 DJANGO_DEBUG=true python manage.py runserver
