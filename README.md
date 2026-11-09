@@ -179,6 +179,7 @@ GPR Django app (/var/www/alignment/GPR)
 
 ## 2. Platform
 | Item | Value |
+|---|---|
 | OS | Ubuntu 24.04.5 LTS (Noble Numbat) |
 | Python | 3.10.14 | 
 | Process manager Gunicorn | 25.1.0 (worker_class gthread, 4 threads/worker, workers = cpu_count()*2+1, timeout=600s) |
