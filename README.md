@@ -178,28 +178,28 @@ This repository ships as a ready-to-run Django project:
 GPR Django app (/var/www/alignment/GPR)
 
 ## 2. Platform
-|Item | Value|
-|OS | Ubuntu 24.04.5 LTS (Noble Numbat)|
-|Python | 3.10.14| 
-|Process manager Gunicorn | 25.1.0 (worker_class gthread, 4 threads/worker, workers = cpu_count()*2+1, timeout=600s)|
-|Database | SQLite (db.sqlite3, Django django.db.backends.sqlite3)|
+| Item | Value|
+| OS | Ubuntu 24.04.5 LTS (Noble Numbat)|
+| Python | 3.10.14| 
+| Process manager Gunicorn | 25.1.0 (worker_class gthread, 4 threads/worker, workers = cpu_count()*2+1, timeout=600s)|
+| Database | SQLite (db.sqlite3, Django django.db.backends.sqlite3)|
 
 ## 3. Core framework & libraries (GPR Django app)
-|Package | Version|
-|Django | 5.2.11|
-|asgiref | 3.11.1|
-|django-sslserver | 0.22|
-|sqlparse | 0.5.5|
-|gunicorn | 25.1.0|
-|Biopython (Bio, used for FASTA parsing in services.py) | 1.86|
-|COBRApy (cobra, SBML model I/O + GPR rule AST validation) | 0.30.0|
-|python-libsbml | 5.21.1|
-|optlang | 1.8.3|
-|swiglpk | 5.0.13|
-|numpy | 2.2.6|
-|scipy | 1.15.3|
-|pandas | 2.3.3|
-|typing_extensions | 4.15.0|
+| Package | Version|
+| Django | 5.2.11|
+| asgiref | 3.11.1|
+| django-sslserver | 0.22|
+| sqlparse | 0.5.5|
+| gunicorn | 25.1.0|
+| Biopython (Bio, used for FASTA parsing in services.py) | 1.86|
+| COBRApy (cobra, SBML model I/O + GPR rule AST validation) | 0.30.0|
+| python-libsbml | 5.21.1|
+| optlang | 1.8.3|
+| swiglpk | 5.0.13|
+| numpy | 2.2.6|
+| scipy | 1.15.3|
+| pandas | 2.3.3|
+| typing_extensions | 4.15.0|
 
 ## 4. External CLI bioinformatics tools invoked by services.py
 
@@ -208,8 +208,8 @@ Fast search of genome proteins against the curated complex database complexes.dm
 diamond version 2.0.14
 
 ## 5. Key configuration (settings.py, models.py, forms.py, gunicorn_config.py)
-|Setting | Value| Why it matters|
-|evalue_threshold (default, GPRAnalysisJob model + form)| 1e-30	| DIAMOND hit acceptance cutoff; user-adjustable per job|
-|DATA_UPLOAD_MAX_NUMBER_FIELDS|	100000|	Needed because the ambiguity-resolution form emits one checkbox per gene/reaction/complex|
-|DATA_UPLOAD_MAX_MEMORY_SIZE / FILE_UPLOAD_MAX_MEMORY_SIZE| 200 MB| Large genome/model uploads|
-|Gunicorn timeout / graceful_timeout| 600s| COBRApy SBML rewrite can be slow on large models|
+| Setting | Value| Why it matters|
+| evalue_threshold (default, GPRAnalysisJob model + form)| 1e-30	| DIAMOND hit acceptance cutoff; user-adjustable per job|
+| DATA_UPLOAD_MAX_NUMBER_FIELDS|	100000|	Needed because the ambiguity-resolution form emits one checkbox per gene/reaction/complex|
+| DATA_UPLOAD_MAX_MEMORY_SIZE / FILE_UPLOAD_MAX_MEMORY_SIZE| 200 MB| Large genome/model uploads|
+| Gunicorn timeout / graceful_timeout| 600s| COBRApy SBML rewrite can be slow on large models|
