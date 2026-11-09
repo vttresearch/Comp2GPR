@@ -178,28 +178,28 @@ This repository ships as a ready-to-run Django project:
 GPR Django app (/var/www/alignment/GPR)
 
 ## 2. Platform
-| Item | Value|
-| OS | Ubuntu 24.04.5 LTS (Noble Numbat)|
-| Python | 3.10.14| 
-| Process manager Gunicorn | 25.1.0 (worker_class gthread, 4 threads/worker, workers = cpu_count()*2+1, timeout=600s)|
-| Database | SQLite (db.sqlite3, Django django.db.backends.sqlite3)|
+| Item | Value |
+| OS | Ubuntu 24.04.5 LTS (Noble Numbat) |
+| Python | 3.10.14 | 
+| Process manager Gunicorn | 25.1.0 (worker_class gthread, 4 threads/worker, workers = cpu_count()*2+1, timeout=600s) |
+| Database | SQLite (db.sqlite3, Django django.db.backends.sqlite3) |
 
 ## 3. Core framework & libraries (GPR Django app)
-| Package | Version|
-| Django | 5.2.11|
-| asgiref | 3.11.1|
-| django-sslserver | 0.22|
-| sqlparse | 0.5.5|
-| gunicorn | 25.1.0|
-| Biopython (Bio, used for FASTA parsing in services.py) | 1.86|
-| COBRApy (cobra, SBML model I/O + GPR rule AST validation) | 0.30.0|
-| python-libsbml | 5.21.1|
-| optlang | 1.8.3|
-| swiglpk | 5.0.13|
-| numpy | 2.2.6|
-| scipy | 1.15.3|
-| pandas | 2.3.3|
-| typing_extensions | 4.15.0|
+| Package | Version |
+| Django | 5.2.11 |
+| asgiref | 3.11.1 |
+| django-sslserver | 0.22 |
+| sqlparse | 0.5.5 |
+| gunicorn | 25.1.0 |
+| Biopython (Bio, used for FASTA parsing in services.py) | 1.86 |
+| COBRApy (cobra, SBML model I/O + GPR rule AST validation) | 0.30.0 |
+| python-libsbml | 5.21.1 |
+| optlang | 1.8.3 |
+| swiglpk | 5.0.13 |
+| numpy | 2.2.6 |
+| scipy | 1.15.3 |
+| pandas | 2.3.3 |
+| typing_extensions | 4.15.0 |
 
 ## 4. External CLI bioinformatics tools invoked by services.py
 
