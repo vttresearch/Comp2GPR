@@ -187,6 +187,7 @@ GPR Django app (/var/www/alignment/GPR)
 
 ## 3. Core framework & libraries (GPR Django app)
 | Package | Version |
+|---|---|
 | Django | 5.2.11 |
 | asgiref | 3.11.1 |
 | django-sslserver | 0.22 |
@@ -210,6 +211,7 @@ diamond version 2.0.14
 
 ## 5. Key configuration (settings.py, models.py, forms.py, gunicorn_config.py)
 | Setting | Value| Why it matters|
+|---|---|---|
 | evalue_threshold (default, GPRAnalysisJob model + form)| 1e-30	| DIAMOND hit acceptance cutoff; user-adjustable per job|
 | DATA_UPLOAD_MAX_NUMBER_FIELDS|	100000|	Needed because the ambiguity-resolution form emits one checkbox per gene/reaction/complex|
 | DATA_UPLOAD_MAX_MEMORY_SIZE / FILE_UPLOAD_MAX_MEMORY_SIZE| 200 MB| Large genome/model uploads|
