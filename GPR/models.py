@@ -31,13 +31,17 @@ class GPRAnalysisJob(models.Model):
     organism_name = models.CharField(max_length=255, null=True, blank=True)
     gene_count = models.IntegerField(null=True, blank=True)
     matched_genes = models.IntegerField(default=0)
+    evalue_threshold = models.FloatField(default=1e-30, help_text="E-value threshold for BLAST hits (lower = stricter)")
     
     # Store ambiguous cases as JSON for review
     ambiguous_cases_json = models.TextField(null=True, blank=True)
     
     # Track if ambiguous cases need user resolution (independent of job status)
     has_unresolved_ambiguities = models.BooleanField(default=False, help_text="Indicates if ambiguous cases need user review (independent of job status)")
-    
+
+    # Set when the (slow) model-rewrite step needs to run in the background worker
+    needs_finalization = models.BooleanField(default=False, help_text="Awaiting background worker to apply resolved GPR rules to the model")
+
     # GPR rules and updated model
     gpr_rules_json = models.TextField(null=True, blank=True, help_text="Mapping of reaction_id to GPR rule text")
     updated_model_path = models.CharField(max_length=512, null=True, blank=True, help_text="Path to updated model with GPR rules")

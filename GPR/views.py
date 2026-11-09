@@ -14,7 +14,8 @@ from .services import (
     parse_stoichiometry_string,
     normalize_uniprot_id,
     update_model_with_gpr_rules,
-    build_complex_summary
+    build_complex_summary,
+    start_finalize_ambiguities_job
 )
 import uuid
 import json
@@ -46,6 +47,13 @@ def gpr_analysis_index(request):
             job.job_id = str(uuid.uuid4())[:8]
             job.organism_name = form.cleaned_data['organism_name']
             job.status = 'queued'
+            # Always explicitly set evalue_threshold from form (ModelForm.save() should do this, but be explicit)
+            threshold = form.cleaned_data.get('evalue_threshold')
+            if threshold is not None:
+                job.evalue_threshold = threshold
+            else:
+                # If not provided, use model default (1e-30)
+                job.evalue_threshold = 1e-30
             # Only set user if authenticated
             if request.user.is_authenticated:
                 job.user = request.user
@@ -53,6 +61,10 @@ def gpr_analysis_index(request):
                 request.session.create()
             job.session_key = request.session.session_key
             job.save()
+
+            # Ensure the queue worker is running to process this job
+            from Reconstruction.services import _ensure_queue_worker_running
+            _ensure_queue_worker_running()
             
             return redirect('gpr:job_detail', job_id=job.id)
     else:
@@ -325,247 +337,78 @@ def gpr_resolve_ambiguities(request, job_id):
                 print(f"[resolve_ambiguities] Complex {cpx_id}: no blast_results, creating empty list")
             else:
                 print(f"[resolve_ambiguities] Complex {cpx_id}: has {len(cpx.get('blast_results', []))} blast results")
-    
+
+    # Hide complex options that share no OTHER member (by UniProt ID or matched
+    # genome gene) with the reaction's original GPR rule. The gene's own hit
+    # protein is excluded from the comparison since it's shared by every
+    # candidate complex (that's why they're ambiguous in the first place) and
+    # would otherwise make every candidate trivially "match".
+    def _complex_matches_rule(cpx, rule_text, own_uniprot_id):
+        if not rule_text:
+            return True  # nothing to compare against; don't filter blindly
+        own_norm = normalize_uniprot_id(own_uniprot_id).upper() if own_uniprot_id else None
+        candidates = set()
+        for uid in cpx.get('stoichiometry', {}).keys():
+            if own_norm and normalize_uniprot_id(uid).upper() == own_norm:
+                continue
+            candidates.add(str(uid))
+        for br in cpx.get('blast_results', []):
+            uid = br.get('uniprot_id')
+            if uid:
+                if own_norm and normalize_uniprot_id(uid).upper() == own_norm:
+                    continue
+                candidates.add(str(uid))
+            if br.get('genome_gene'):
+                candidates.add(str(br['genome_gene']))
+        return any(token and token in rule_text for token in candidates)
+
+    # Drop gene/reaction entries where no candidate complex matches the rule,
+    # and drop reactions left with no genes at all — the user shouldn't have
+    # to wade through cases with nothing relevant to pick from.
+    filtered_reactions_list = []
+    for reaction in reactions_list:
+        rule_text = reaction.get('gpr', '') or ''
+        kept_genes = []
+        for gene_case in reaction['genes']:
+            relevant = [
+                cpx for cpx in gene_case['complexes']
+                if _complex_matches_rule(cpx, rule_text, gene_case.get('uniprot_id'))
+            ]
+            if relevant:
+                gene_case['complexes'] = relevant
+                kept_genes.append(gene_case)
+        if kept_genes:
+            reaction['genes'] = kept_genes
+            filtered_reactions_list.append(reaction)
+    reactions_list = filtered_reactions_list
+
     if request.method == 'POST':
-        # Process user selections (checkboxes → multiple values per field)
-        selections = {}  # {(gene, reaction_id): [complex_id, ...]}
+        # Process user selections (checkboxes → multiple values per field) and
+        # persist them. The heavy work (building GPR rules + rewriting the SBML
+        # model) runs in the background queue worker to avoid a gunicorn
+        # WORKER TIMEOUT on large models.
         for case_idx, case in enumerate(case_details):
             gene = case['genome_gene']
-            
-            # Get selected complex(es) for each reaction
+
             for reaction_idx, reaction in enumerate(case.get('reactions', [])):
                 reaction_id = reaction['reaction_id']
                 field_name = f"case_{case_idx}_reaction_{reaction_idx}"
-                
+
                 selected_complexes = [v for v in request.POST.getlist(field_name) if v]
                 # Delete old resolutions for this gene+reaction, then create new ones
                 GPRAmbiguousCaseResolution.objects.filter(
                     gpr_job=job, genome_gene=gene, reaction_id=reaction_id
                 ).delete()
-                if selected_complexes:
-                    for cpx_id in selected_complexes:
-                        GPRAmbiguousCaseResolution.objects.create(
-                            gpr_job=job,
-                            genome_gene=gene,
-                            reaction_id=reaction_id,
-                            selected_complex=cpx_id,
-                        )
-                    selections[(gene, reaction_id)] = selected_complexes
-        
-        # --- Build GPR rules from user selections ---
-        # Load complex stoichiometry
-        import pickle
-        from django.conf import settings
-        complex_to_stoichiometry = {}
-        stoich_path = os.path.join(settings.BASE_DIR, 'data', 'gpr_reference', 'complex_stoichiometry.pkl')
-        try:
-            with open(stoich_path, 'rb') as f:
-                complex_to_stoichiometry = pickle.load(f)
-        except Exception as e:
-            print(f"[resolve POST] Warning: could not load stoichiometry: {e}")
+                for cpx_id in selected_complexes:
+                    GPRAmbiguousCaseResolution.objects.create(
+                        gpr_job=job,
+                        genome_gene=gene,
+                        reaction_id=reaction_id,
+                        selected_complex=cpx_id,
+                    )
 
-        # Group selections by reaction, building GPR rules
-        # For each reaction: collect all genes assigned to the same complex → AND them
-        reaction_complex_genes = {}  # {reaction_id: {complex_id: [gene_ids]}}
-        for (gene, reaction_id), complex_ids in selections.items():
-            for complex_id in complex_ids:
-                reaction_complex_genes.setdefault(reaction_id, {}).setdefault(complex_id, []).append(gene)
+        start_finalize_ambiguities_job(job.id)
 
-        # Build reverse map: uniprot → genome gene from BLAST results
-        uniprot_to_gene = {}
-        for br in job.blast_results.all():
-            # br.complex_id actually stores the UniProt ID of the hit
-            uid = br.complex_id
-            if uid:
-                uid_norm = normalize_uniprot_id(uid).upper()
-                # Keep best hit per uniprot (lowest evalue)
-                if uid_norm not in uniprot_to_gene or br.evalue < uniprot_to_gene[uid_norm][1]:
-                    uniprot_to_gene[uid_norm] = (br.gene_id, br.evalue)
-        # Simplify to {uniprot: gene}
-        uniprot_to_gene = {uid: val[0] for uid, val in uniprot_to_gene.items()}
-
-        # Also include unique cases from the original analysis (already resolved automatically)
-        unique_data = []
-        if job.gpr_rules_json:
-            try:
-                existing_rules = json.loads(job.gpr_rules_json)
-            except Exception:
-                existing_rules = {}
-        else:
-            existing_rules = {}
-
-        # Normalize ALL incoming rules: convert uppercase operators to lowercase
-        def normalize_rule(rule):
-            """Normalize rule string to use lowercase and/or operators"""
-            if not rule:
-                return rule
-            import re as _re
-            normalized = _re.sub(r'\bAND\b', 'and', rule, flags=_re.IGNORECASE)
-            normalized = _re.sub(r'\bOR\b', 'or', normalized, flags=_re.IGNORECASE)
-            normalized = _re.sub(r'\s+', ' ', normalized).strip()
-            return normalized
-        
-        # Start with normalized existing rules from unique cases
-        gpr_rules = {}
-        for rxn_id, rule in existing_rules.items():
-            gpr_rules[rxn_id] = normalize_rule(rule)
-
-        for reaction_id, complexes in reaction_complex_genes.items():
-            # If multiple complexes contribute to the same reaction => OR them
-            or_parts = []
-            for complex_id, genes in complexes.items():
-                # Start with genes from user selections
-                gene_set = set(genes)
-
-                # Find the complex in the original ambiguous data to get
-                # the per-member DIAMOND results
-                for case in case_details:
-                    for cpx in case.get('complexes', []):
-                        if cpx.get('complex_id') == complex_id:
-                            for br in cpx.get('blast_results', []):
-                                g = br.get('genome_gene', '')
-                                if g:
-                                    # Clean any stoichiometry notation from genes
-                                    g_clean = str(g).strip()
-                                    if '(' in g_clean and ')' in g_clean:
-                                        g_clean = g_clean[:g_clean.index('(')]
-                                    g_clean = g_clean.strip()
-                                    if g_clean:
-                                        gene_set.add(g_clean)
-
-                # Fallback: also cross-reference stoichiometry UniProts
-                stoich_str = complex_to_stoichiometry.get(complex_id, '')
-                stoich_dict = parse_stoichiometry_string(stoich_str) if stoich_str else {}
-                for uid in stoich_dict:
-                    # uid is the UniProt ID (parsed without stoichiometry notation)
-                    uid_clean = str(uid).strip()
-                    # Remove any trailing (n) notation if it somehow got there
-                    if '(' in uid_clean:
-                        uid_clean = uid_clean[:uid_clean.index('(')]
-                    
-                    mapped = uniprot_to_gene.get(uid_clean.upper(), '')
-                    if mapped and mapped not in gene_set:
-                        # Also clean the mapped gene in case it has (n) notation
-                        mapped_clean = str(mapped).strip()
-                        if '(' in mapped_clean:
-                            mapped_clean = mapped_clean[:mapped_clean.index('(')]
-                        if mapped_clean:
-                            gene_set.add(mapped_clean)
-
-                gene_parts = sorted(gene_set)
-                # Filter out empty gene names and remove any stoichiometry notation
-                cleaned_parts = []
-                for g in gene_parts:
-                    g_clean = str(g).strip()
-                    # Remove stoichiometry notation like (4) if present
-                    if '(' in g_clean and ')' in g_clean:
-                        g_clean = g_clean[:g_clean.index('(')]
-                    g_clean = g_clean.strip()
-                    if g_clean:
-                        cleaned_parts.append(g_clean)
-                gene_parts = cleaned_parts
-                
-                if not gene_parts:
-                    print(f"[resolve POST] Warning: No valid genes for complex {complex_id} in reaction {reaction_id}")
-                    continue
-                    
-                and_rule = ' and '.join(str(g).strip() for g in gene_parts)
-                if len(gene_parts) > 1:
-                    and_rule = f"({and_rule})"
-                or_parts.append(and_rule)
-            rule = ' or '.join(or_parts) if or_parts else ''
-            if rule:
-                # Normalize the rule before adding it
-                normalized_rule = normalize_rule(rule)
-                print(f"[resolve POST] Setting {reaction_id} = {normalized_rule}")
-                gpr_rules[reaction_id] = normalized_rule
-
-        # --- Update the model file ---
-        if gpr_rules:
-            try:
-                input_model_path = job.metabolic_model.path
-                _, input_ext = os.path.splitext(input_model_path)
-                if not input_ext:
-                    input_ext = '.sbml'
-
-                from django.conf import settings
-                output_dir = os.path.join(settings.MEDIA_ROOT, 'reconstructed_models')
-                os.makedirs(output_dir, exist_ok=True)
-                output_path = os.path.join(output_dir, f'model_gpr_updated_{job.id}{input_ext}')
-
-                result = update_model_with_gpr_rules(input_model_path, gpr_rules, output_path)
-
-                if result['success']:
-                    # Use the merged rules (which include preserved OR branches from the original GPR)
-                    final_rules = result.get('merged_rules', gpr_rules)
-                    # Update gpr_rules so build_complex_summary shows the actual final rules
-                    gpr_rules.update(final_rules)
-                    job.gpr_rules_json = json.dumps(gpr_rules)
-                    job.updated_model_path = output_path
-                    job.message = f"GPR rules applied to {result['updates']} reactions. Model ready for download."
-                    print(f"[resolve POST] Updated model saved: {output_path}")
-                else:
-                    job.message = f"Selections saved. Model update failed: {result.get('error', 'unknown')}"
-                    print(f"[resolve POST] Model update failed: {result.get('error')}")
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                job.message = f"Selections saved but model update failed: {str(e)}"
-                print(f"[resolve POST] Error: {e}")
-        else:
-            job.message = "No GPR rules generated from selections."
-
-        # Build complex summary for display
-        # Only include cases where a complex was actually selected
-        resolved_cases = []
-        for case_idx, case in enumerate(case_details):
-            for reaction_idx, reaction in enumerate(case.get('reactions', [])):
-                rxn_id = reaction['reaction_id']
-                sel_cpxs = selections.get((case['genome_gene'], rxn_id), [])
-                for sel_cpx in sel_cpxs:
-                    resolved_cases.append({
-                        'genome_gene': case['genome_gene'],
-                        'uniprot_id': case.get('uniprot_id', ''),
-                        'possible_complexes': case.get('complexes', []),
-                        'reactions_with_gene': [reaction],
-                        'selected_complex': sel_cpx,
-                    })
-        new_summary_rows = build_complex_summary(
-            resolved_cases,
-            complex_to_stoichiometry,
-            gpr_rules,
-            complex_descriptions=complex_descriptions,
-            blast_results=job.blast_results.all()
-        )
-
-        # Merge with existing summary from unique (auto-resolved) cases
-        existing_summary = []
-        if job.complex_summary_json:
-            try:
-                existing_summary = json.loads(job.complex_summary_json)
-            except Exception:
-                pass
-
-        # Combine: keep existing rows for reactions not in the new summary,
-        # then append all new rows. Update gpr_rule on existing rows too.
-        new_rxn_ids = {r['reaction_id'] for r in new_summary_rows}
-        merged = [r for r in existing_summary if r['reaction_id'] not in new_rxn_ids]
-        # Update gpr_rule for existing rows (the rules dict may have changed)
-        for row in merged:
-            rxn_id = row.get('reaction_id', '')
-            if rxn_id in gpr_rules:
-                row['gpr_rule'] = gpr_rules[rxn_id]
-        merged.extend(new_summary_rows)
-        merged.sort(key=lambda r: r.get('reaction_id', ''))
-        job.complex_summary_json = json.dumps(merged)
-
-        job.status = 'completed'
-        try:
-            job.has_unresolved_ambiguities = False  # Mark ambiguities as resolved
-        except AttributeError:
-            pass  # Column not in DB yet (migration pending)
-        job.save()
-        
         return redirect('gpr:job_detail', job_id=job_id)
     
     context = {
@@ -573,6 +416,7 @@ def gpr_resolve_ambiguities(request, job_id):
         'case_details': case_details,
         'reactions_list': reactions_list,  # NEW: reactions grouped with all ambiguous genes
         'complex_metadata': complex_metadata_dict,
+        'ambiguous_gene_count': len(case_details),
         'page_title': f'Resolve Ambiguities - {job.organism_name}'
     }
     return render(request, 'GPR/resolve_ambiguities.html', context)

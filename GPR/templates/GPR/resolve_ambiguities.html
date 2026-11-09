@@ -205,6 +205,9 @@
     <div class="instructions">
         <h5>📋 Instructions</h5>
         <p class="mb-0">Click a reaction to expand it. For each gene you may select <strong>one or more</strong> complexes (they will be OR-ed in the GPR rule). "None" is pre-selected — leave it if you don't want to assign a complex.</p>
+        <p class="mb-0 mt-2 text-muted" style="font-size:0.88rem;">
+            {{ ambiguous_gene_count }} ambiguous gene{{ ambiguous_gene_count|pluralize }} shown across {{ reactions_list|length }} reaction{{ reactions_list|length|pluralize }} below — a single gene can be involved in several reactions, so the reaction count is usually higher.
+        </p>
     </div>
 
     <form method="post">
@@ -343,9 +346,9 @@
                             </div>
                         </div>
                         {% endfor %}
-                    </div>
-                </div>
-                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
             </div>
         </div>
         {% endfor %}

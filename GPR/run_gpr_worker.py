@@ -19,6 +19,7 @@ import sys
 import time
 import signal
 import json
+import csv
 
 # Bootstrap Django
 project_root = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
@@ -34,6 +35,7 @@ from django.db import transaction
 
 POLL_INTERVAL = 5  # seconds between queue checks
 PID_FILE = os.path.join(settings.MEDIA_ROOT, 'gpr_queue_worker.pid')
+GPR_RESULTS_DIR = os.path.join(settings.MEDIA_ROOT, 'gpr_results')
 SHUTDOWN = False
 
 
@@ -88,6 +90,7 @@ def process_next_job():
         job.save()
 
     print(f"[gpr-worker] Processing job {job.id} (organism: {job.organism_name})")
+    print(f"[gpr-worker] Job {job.id}: Database evalue_threshold = {job.evalue_threshold} (type: {type(job.evalue_threshold).__name__})")
     
     try:
         # Load complex data from pickle
@@ -104,11 +107,12 @@ def process_next_job():
         
         # Step 1: Run main GPR analysis
         print(f"[gpr-worker] Job {job.id}: Starting analysis...")
+        print(f"[gpr-worker] Job {job.id}: Using evalue_threshold={job.evalue_threshold}")
         gpr_results = analyze_gpr_with_complexes(
             query_genome_fasta=job.genome_fasta.path,
             complex_to_stoichiometry=complex_to_stoichiometry,
             existing_model_genes=existing_model_genes,
-            evalue_threshold=1e-30,  # User requirement: only hits with e-value < 1e-30
+            evalue_threshold=job.evalue_threshold,
             job=job  # Pass job for progress updates
         )
         
@@ -138,6 +142,22 @@ def process_next_job():
                 )
             except Exception as e:
                 print(f"[gpr-worker] Warning saving BLAST result: {e}")
+
+        # Write CSV directly to gpr_results directory so user can inspect
+        csv_filename = f"gpr_blast_results_{job.id}.csv"
+        csv_path = os.path.join(GPR_RESULTS_DIR, csv_filename)
+        os.makedirs(GPR_RESULTS_DIR, exist_ok=True)
+        
+        with open(csv_path, 'w', newline='') as csvfile:
+            writer = csv.DictWriter(
+                csvfile,
+                fieldnames=['gene_id', 'uniprot_id', 'evalue', 'bitscore', 'identity', 'query_coverage'],
+                extrasaction='ignore'
+            )
+            writer.writeheader()
+            writer.writerows(all_blast_results)
+        
+        print(f"[gpr-worker] Job {job.id}: BLAST CSV saved ({len(all_blast_results)} rows) to {csv_path}")
         
         # Save initial results
         best_hits = gpr_results.get('best_hits', {})
@@ -407,6 +427,7 @@ def main():
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
+    os.makedirs(GPR_RESULTS_DIR, exist_ok=True)
     write_pid()
     print(f"[gpr-worker] Started (pid={os.getpid()}), polling every {POLL_INTERVAL}s")
 

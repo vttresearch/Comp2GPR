@@ -20,9 +20,22 @@ class GPRAnalysisForm(forms.ModelForm):
         widget=forms.FileInput(attrs={'class': 'form-control', 'accept': '.fasta,.fa,.fna'})
     )
     
+    evalue_threshold = forms.FloatField(
+        label="E-value Threshold",
+        initial=1e-30,
+        required=False,
+        help_text="E-value threshold for BLAST hits (default: 1e-30, larger value = looser filter)",
+        widget=forms.NumberInput(attrs={
+            'class': 'form-control',
+            'placeholder': '1e-30',
+            'step': 'any',
+            'min': '0'
+        })
+    )
+    
     class Meta:
         model = GPRAnalysisJob
-        fields = ['organism_name', 'metabolic_model', 'genome_fasta']
+        fields = ['organism_name', 'metabolic_model', 'genome_fasta', 'evalue_threshold']
 
 
 class ComplexSelectionForm(forms.Form):

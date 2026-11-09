@@ -393,13 +393,12 @@ def run_blast_search(query_fasta, db_path, evalue_threshold=1e-5):
 
 def get_best_blast_hit(blast_results, evalue_threshold=1e-5):
     """
-    Filter BLAST results to get the best hit for each query gene, ensuring
-    each complex protein (UniProt ID) is assigned to at most ONE gene.
-
-    When multiple genes share the same best UniProt hit, the gene with the
-    lowest e-value keeps it; the others fall back to their next-best
-    *unassigned* UniProt hit.  This guarantees a 1-to-1 mapping.
-
+    Filter BLAST results to get the best hit for each query gene.
+    
+    For each gene, keeps its single best-matching UniProt ID (lowest e-value).
+    Multiple genes CAN match the same complex—this is normal in metabolic networks
+    (paralogs, gene families).
+    
     Returns dict: {gene_id: best_hit_dict}
     """
     # Step 1: collect ALL valid hits per gene, sorted by e-value (ascending)
@@ -408,45 +407,25 @@ def get_best_blast_hit(blast_results, evalue_threshold=1e-5):
         if result['evalue'] <= evalue_threshold:
             gene_id = result['gene_id']
             hits_per_gene.setdefault(gene_id, []).append(result)
+    
+    print(f"[get_best_blast_hit] Input: {len(blast_results)} total results, evalue_threshold={evalue_threshold}")
+    print(f"[get_best_blast_hit] After evalue filter: {len(hits_per_gene)} genes with at least one hit")
 
     # Each gene's list is already sorted (blast_results is sorted by evalue),
     # but let's be safe
     for gene_id in hits_per_gene:
         hits_per_gene[gene_id].sort(key=lambda r: r['evalue'])
 
-    # Step 2: greedy 1-to-1 assignment
-    # Priority: genes whose top hit has the lowest e-value go first
-    genes_sorted = sorted(
-        hits_per_gene.keys(),
-        key=lambda g: hits_per_gene[g][0]['evalue']
-    )
+    # Step 2: for each gene, take its SINGLE best hit (lowest e-value)
+    # Multiple genes can share the same complex—this is expected!
+    best_hits = {}  # gene_id -> hit
+    
+    for gene_id in hits_per_gene:
+        best_hit = hits_per_gene[gene_id][0]  # Already sorted, take first
+        best_hits[gene_id] = best_hit
 
-    assigned_uniprots = set()   # UniProt IDs already claimed
-    best_hits = {}              # gene_id -> hit
-
-    for gene_id in genes_sorted:
-        for hit in hits_per_gene[gene_id]:
-            uid = hit['uniprot_id']
-            if uid not in assigned_uniprots:
-                best_hits[gene_id] = hit
-                assigned_uniprots.add(uid)
-                break
-        # If every hit for this gene is already claimed, skip it
-
-    # Debug: report reassignments
-    reassigned = 0
-    for gene_id in best_hits:
-        original_top = hits_per_gene[gene_id][0]['uniprot_id']
-        if best_hits[gene_id]['uniprot_id'] != original_top:
-            reassigned += 1
-            print(f"[get_best_blast_hit] {gene_id}: reassigned from "
-                  f"{original_top} (taken) -> {best_hits[gene_id]['uniprot_id']} "
-                  f"(e={best_hits[gene_id]['evalue']:.1e})")
-
-    skipped = len(hits_per_gene) - len(best_hits)
-    print(f"[get_best_blast_hit] {len(best_hits)} genes assigned, "
-          f"{reassigned} reassigned to next-best hit, "
-          f"{skipped} genes skipped (all hits taken)")
+    print(f"[get_best_blast_hit] {len(best_hits)} genes assigned to their best UniProt match")
+    print(f"[get_best_blast_hit] (Note: Multiple genes may share the same complex)")
 
     return best_hits
 
@@ -528,6 +507,7 @@ def run_diamond_search(query_fasta, db_path, evalue_threshold=1e-5):
         
         # Sort by evalue (ascending - smallest first = best matches)
         results.sort(key=lambda x: x['evalue'])
+        print(f"[run_diamond_search] evalue_threshold={evalue_threshold}: found {len(results)} raw DIAMOND results")
         return results
     
     except subprocess.CalledProcessError as e:
@@ -718,6 +698,36 @@ def blast_sequences_against_genome(sequences_dict, genome_blast_db, evalue_thres
     finally:
         if os.path.exists(temp_fasta.name):
             os.unlink(temp_fasta.name)
+
+
+def resolve_unique_gene_per_complex(genome_matches):
+    """
+    Given {complex_protein: [hit, hit, ...]} (each hit list sorted by e-value
+    ascending), assign each complex protein a genome gene such that no genome
+    gene is reused for two different proteins of the same complex. Resolved
+    greedily by e-value: the globally best (protein, hit) pairs claim their
+    genome gene first; a protein whose preferred gene is already taken by a
+    better-scoring protein falls through to its next-best alternative.
+
+    Returns {complex_protein: hit_dict} (omits proteins with no free hit left).
+    """
+    candidates = []
+    for protein_id, hits in genome_matches.items():
+        for hit in hits:
+            candidates.append((hit['evalue'], protein_id, hit))
+    candidates.sort(key=lambda c: c[0])
+
+    assigned_genes = set()
+    resolved = {}
+    for _evalue, protein_id, hit in candidates:
+        if protein_id in resolved:
+            continue  # this protein already claimed a gene
+        gene = hit['genome_gene']
+        if gene in assigned_genes:
+            continue  # gene already claimed by a better-scoring protein
+        assigned_genes.add(gene)
+        resolved[protein_id] = hit
+    return resolved
 
 
 def deduplicate_ambiguous_cases(ambiguous_data):
@@ -963,24 +973,26 @@ def populate_blast_results_for_complexes(ambiguous_data, genome_blast_db, comple
             )
             
             # Populate BLAST results - now includes alternative hits
+            # Resolve each protein to a unique genome gene (no gene reused
+            # for two different proteins within the same complex)
+            resolved_matches = resolve_unique_gene_per_complex(genome_matches)
             blast_results = []
             for uniprot_id, stoich_value in complex_info['stoichiometry'].items():
                 matches = genome_matches.get(uniprot_id, [])
-                if matches:
-                    # Best match (first/lowest evalue)
-                    best_match = matches[0]
-                    
-                    # Collect alternative hits (if any)
+                best_match = resolved_matches.get(uniprot_id)
+                if matches and best_match:
+                    # Collect alternative hits (everything but the assigned one)
                     alternative_hits = []
-                    if len(matches) > 1:
-                        for alt_match in matches[1:]:
-                            alt_str = (
-                                f"{alt_match['genome_gene']} "
-                                f"(e-val: {alt_match['evalue']:.2e}, "
-                                f"identity: {alt_match['identity']:.1f}%, "
-                                f"coverage: {alt_match['query_coverage']:.1f}%)"
-                            )
-                            alternative_hits.append(alt_str)
+                    for alt_match in matches:
+                        if alt_match is best_match:
+                            continue
+                        alt_str = (
+                            f"{alt_match['genome_gene']} "
+                            f"(e-val: {alt_match['evalue']:.2e}, "
+                            f"identity: {alt_match['identity']:.1f}%, "
+                            f"coverage: {alt_match['query_coverage']:.1f}%)"
+                        )
+                        alternative_hits.append(alt_str)
                     
                     blast_results.append({
                         'uniprot_id': uniprot_id,
@@ -1090,14 +1102,17 @@ def build_gpr_rule_from_complex(best_hit, complex_to_stoichiometry,
            f"{len(genome_matches)}/{len(sequences)} proteins: {genome_matches}")
     write_debug(msg)
     
-    # Build GPR rule with stoichiometry
+    # Build GPR rule with stoichiometry. Resolve each protein to a unique
+    # genome gene so the same gene is never used for two different proteins
+    # within this complex.
+    resolved_matches = resolve_unique_gene_per_complex(genome_matches)
     gpr_components = []
     new_genes = []
     
     for uniprot_id, stoich_value in protein_stoichiometry.items():
-        # Get best genome match for this complex protein
-        if uniprot_id in genome_matches and genome_matches[uniprot_id]:
-            genome_gene = genome_matches[uniprot_id][0]['genome_gene']  # First/best match
+        best_match = resolved_matches.get(uniprot_id)
+        if best_match:
+            genome_gene = best_match['genome_gene']
             
             # Do NOT add stoichiometry notation to gene names
             # COBRApy doesn't support "gene(4)" syntax in GPR rules
@@ -1107,22 +1122,13 @@ def build_gpr_rule_from_complex(best_hit, complex_to_stoichiometry,
             if genome_gene not in existing_genes:
                 new_genes.append(genome_gene)
         else:
-            msg = f"[build_gpr_rule] {complex_id}: no genome match for {uniprot_id}"
+            msg = f"[build_gpr_rule] {complex_id}: no (unclaimed) genome match for {uniprot_id}"
             write_debug(msg)
     
     if not gpr_components:
         msg = f"[build_gpr_rule] {complex_id}: no genome matches found for any protein, rule is empty"
         write_debug(msg)
         return None
-    
-    # Deduplicate gene names (same genome gene may match multiple complex proteins)
-    seen = set()
-    unique_components = []
-    for g in gpr_components:
-        if g not in seen:
-            seen.add(g)
-            unique_components.append(g)
-    gpr_components = unique_components
     
     # Discard complex if it has >3 proteins and less than half matched
     total_proteins = len(protein_stoichiometry)
@@ -1148,8 +1154,8 @@ def build_gpr_rule_from_complex(best_hit, complex_to_stoichiometry,
     # Build a mapping of uniprot_id → genome_gene for downstream use
     member_gene_map = {}
     for uniprot_id in protein_stoichiometry:
-        if uniprot_id in genome_matches and genome_matches[uniprot_id]:
-            member_gene_map[uniprot_id] = genome_matches[uniprot_id][0]['genome_gene']
+        if uniprot_id in resolved_matches:
+            member_gene_map[uniprot_id] = resolved_matches[uniprot_id]['genome_gene']
 
     msg = f"[build_gpr_rule] {complex_id}: GPR rule = {' and '.join(gpr_components)}"
     write_debug(msg)
@@ -1965,4 +1971,236 @@ def build_complex_summary(cases, complex_to_stoichiometry, gpr_rules, best_hits=
         })
 
     return rows
+
+
+def start_finalize_ambiguities_job(job_id):
+    """
+    Enqueue the (slow) GPR-rule + model-rewrite step so the resolve-ambiguities
+    view can save the user's selections and return immediately, instead of
+    rewriting the whole SBML model inline and risking a gunicorn WORKER TIMEOUT.
+    """
+    from .models import GPRAnalysisJob
+    job = GPRAnalysisJob.objects.get(id=job_id)
+    job.status = 'processing'
+    job.needs_finalization = True
+    job.message = 'Applying GPR rules to model (this can take a while for large models)...'
+    job.save()
+
+    # Reuse the shared queue worker (alignment-worker.service / run_unified_worker.py),
+    # auto-spawning it if it isn't already running (e.g. in dev).
+    from Reconstruction.services import _ensure_queue_worker_running
+    _ensure_queue_worker_running()
+
+
+def finalize_ambiguity_resolution(job_id):
+    """
+    Build the final GPR rules from the user's saved complex selections
+    (GPRAmbiguousCaseResolution rows) and rewrite the SBML/JSON model.
+    Called by the background queue worker.
+    """
+    import pickle
+    from .models import GPRAnalysisJob, GPRAmbiguousCaseResolution
+
+    job = GPRAnalysisJob.objects.get(id=job_id)
+
+    try:
+        ambiguous_data = json.loads(job.ambiguous_cases_json) if job.ambiguous_cases_json else []
+        case_details = []
+        for case in ambiguous_data:
+            complexes = case['possible_complexes']
+            for cpx in complexes:
+                cpx.setdefault('blast_results', [])
+            case_details.append({
+                'genome_gene': case['genome_gene'],
+                'uniprot_id': case['uniprot_id'],
+                'reactions': case.get('reactions_with_gene', []),
+                'complexes': complexes,
+            })
+
+        complex_descriptions = {}
+        pkl_path = os.path.join(settings.BASE_DIR, 'data', 'gpr_reference', 'complex_metadata.pkl')
+        try:
+            with open(pkl_path, 'rb') as f:
+                complex_descriptions = pickle.load(f)
+        except Exception as e:
+            print(f"[finalize_ambiguity_resolution] Warning: could not load complex_metadata.pkl: {e}")
+
+        complex_to_stoichiometry = {}
+        stoich_path = os.path.join(settings.BASE_DIR, 'data', 'gpr_reference', 'complex_stoichiometry.pkl')
+        try:
+            with open(stoich_path, 'rb') as f:
+                complex_to_stoichiometry = pickle.load(f)
+        except Exception as e:
+            print(f"[finalize_ambiguity_resolution] Warning: could not load complex_stoichiometry.pkl: {e}")
+
+        # Rebuild selections from the resolutions saved synchronously on POST
+        selections = {}  # {(gene, reaction_id): [complex_id, ...]}
+        for res in GPRAmbiguousCaseResolution.objects.filter(gpr_job=job):
+            selections.setdefault((res.genome_gene, res.reaction_id), []).append(res.selected_complex)
+
+        reaction_complex_genes = {}  # {reaction_id: {complex_id: [gene_ids]}}
+        for (gene, reaction_id), complex_ids in selections.items():
+            for complex_id in complex_ids:
+                reaction_complex_genes.setdefault(reaction_id, {}).setdefault(complex_id, []).append(gene)
+
+        # Build reverse map: uniprot -> genome gene from BLAST results
+        uniprot_to_gene = {}
+        for br in job.blast_results.all():
+            uid = br.complex_id  # stores the UniProt ID of the hit
+            if uid:
+                uid_norm = normalize_uniprot_id(uid).upper()
+                if uid_norm not in uniprot_to_gene or br.evalue < uniprot_to_gene[uid_norm][1]:
+                    uniprot_to_gene[uid_norm] = (br.gene_id, br.evalue)
+        uniprot_to_gene = {uid: val[0] for uid, val in uniprot_to_gene.items()}
+
+        existing_rules = {}
+        if job.gpr_rules_json:
+            try:
+                existing_rules = json.loads(job.gpr_rules_json)
+            except Exception:
+                existing_rules = {}
+
+        def normalize_rule(rule):
+            if not rule:
+                return rule
+            normalized = re.sub(r'\bAND\b', 'and', rule, flags=re.IGNORECASE)
+            normalized = re.sub(r'\bOR\b', 'or', normalized, flags=re.IGNORECASE)
+            normalized = re.sub(r'\s+', ' ', normalized).strip()
+            return normalized
+
+        gpr_rules = {rxn_id: normalize_rule(rule) for rxn_id, rule in existing_rules.items()}
+
+        for reaction_id, complexes in reaction_complex_genes.items():
+            # If multiple complexes contribute to the same reaction => OR them
+            or_parts = []
+            for complex_id, genes in complexes.items():
+                gene_set = set(genes)
+
+                for case in case_details:
+                    for cpx in case.get('complexes', []):
+                        if cpx.get('complex_id') == complex_id:
+                            for br in cpx.get('blast_results', []):
+                                g = br.get('genome_gene', '')
+                                if g:
+                                    g_clean = str(g).strip()
+                                    if '(' in g_clean and ')' in g_clean:
+                                        g_clean = g_clean[:g_clean.index('(')]
+                                    g_clean = g_clean.strip()
+                                    if g_clean:
+                                        gene_set.add(g_clean)
+
+                stoich_str = complex_to_stoichiometry.get(complex_id, '')
+                stoich_dict = parse_stoichiometry_string(stoich_str) if stoich_str else {}
+                for uid in stoich_dict:
+                    uid_clean = str(uid).strip()
+                    if '(' in uid_clean:
+                        uid_clean = uid_clean[:uid_clean.index('(')]
+                    mapped = uniprot_to_gene.get(uid_clean.upper(), '')
+                    if mapped and mapped not in gene_set:
+                        mapped_clean = str(mapped).strip()
+                        if '(' in mapped_clean:
+                            mapped_clean = mapped_clean[:mapped_clean.index('(')]
+                        if mapped_clean:
+                            gene_set.add(mapped_clean)
+
+                gene_parts = []
+                for g in sorted(gene_set):
+                    g_clean = str(g).strip()
+                    if '(' in g_clean and ')' in g_clean:
+                        g_clean = g_clean[:g_clean.index('(')]
+                    g_clean = g_clean.strip()
+                    if g_clean:
+                        gene_parts.append(g_clean)
+
+                if not gene_parts:
+                    print(f"[finalize_ambiguity_resolution] Warning: No valid genes for complex {complex_id} in reaction {reaction_id}")
+                    continue
+
+                and_rule = ' and '.join(gene_parts)
+                if len(gene_parts) > 1:
+                    and_rule = f"({and_rule})"
+                or_parts.append(and_rule)
+
+            rule = ' or '.join(or_parts) if or_parts else ''
+            if rule:
+                gpr_rules[reaction_id] = normalize_rule(rule)
+
+        # --- Rewrite the SBML/JSON model (the slow step that caused WORKER TIMEOUT) ---
+        if gpr_rules:
+            try:
+                input_model_path = job.metabolic_model.path
+                _, input_ext = os.path.splitext(input_model_path)
+                if not input_ext:
+                    input_ext = '.sbml'
+                output_dir = os.path.join(settings.MEDIA_ROOT, 'reconstructed_models')
+                os.makedirs(output_dir, exist_ok=True)
+                output_path = os.path.join(output_dir, f'model_gpr_updated_{job.id}{input_ext}')
+
+                result = update_model_with_gpr_rules(input_model_path, gpr_rules, output_path)
+
+                if result['success']:
+                    final_rules = result.get('merged_rules', gpr_rules)
+                    gpr_rules.update(final_rules)
+                    job.gpr_rules_json = json.dumps(gpr_rules)
+                    job.updated_model_path = output_path
+                    job.message = f"GPR rules applied to {result['updates']} reactions. Model ready for download."
+                    print(f"[finalize_ambiguity_resolution] Job {job.id}: updated model saved to {output_path}")
+                else:
+                    job.message = f"Selections saved. Model update failed: {result.get('error', 'unknown')}"
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                job.message = f"Selections saved but model update failed: {str(e)}"
+        else:
+            job.message = "No GPR rules generated from selections."
+
+        # Build complex summary for display (only reactions with a selected complex)
+        resolved_cases = []
+        for case in case_details:
+            for reaction in case.get('reactions', []):
+                rxn_id = reaction['reaction_id']
+                for sel_cpx in selections.get((case['genome_gene'], rxn_id), []):
+                    resolved_cases.append({
+                        'genome_gene': case['genome_gene'],
+                        'uniprot_id': case.get('uniprot_id', ''),
+                        'possible_complexes': case.get('complexes', []),
+                        'reactions_with_gene': [reaction],
+                        'selected_complex': sel_cpx,
+                    })
+
+        new_summary_rows = build_complex_summary(
+            resolved_cases,
+            complex_to_stoichiometry,
+            gpr_rules,
+            complex_descriptions=complex_descriptions,
+            blast_results=job.blast_results.all()
+        )
+
+        existing_summary = []
+        if job.complex_summary_json:
+            try:
+                existing_summary = json.loads(job.complex_summary_json)
+            except Exception:
+                pass
+
+        new_rxn_ids = {r['reaction_id'] for r in new_summary_rows}
+        merged = [r for r in existing_summary if r['reaction_id'] not in new_rxn_ids]
+        for row in merged:
+            rxn_id = row.get('reaction_id', '')
+            if rxn_id in gpr_rules:
+                row['gpr_rule'] = gpr_rules[rxn_id]
+        merged.extend(new_summary_rows)
+        merged.sort(key=lambda r: r.get('reaction_id', ''))
+        job.complex_summary_json = json.dumps(merged)
+
+        job.status = 'completed'
+        job.has_unresolved_ambiguities = False
+        job.save()
+        print(f"[finalize_ambiguity_resolution] Job {job.id} finalized successfully")
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        job.status = 'error'
+        job.error_message = str(exc)
+        job.save()
 
